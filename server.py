@@ -162,7 +162,8 @@ def haversine(a, b, c, d):
 
 def estimate(lat1, lng1, lat2, lng2):
     dist = round(haversine(lat1, lng1, lat2, lng2), 2)
-    return dist, max(1000, int(math.ceil((800 + dist * 300) / 100) * 100))
+    # Customer-facing tariff: 200 FCFA per started kilometre, with a 200 FCFA minimum.
+    return dist, max(200, int(math.ceil(dist) * 200))
 
 
 def event(cx, order_id, status, note):
