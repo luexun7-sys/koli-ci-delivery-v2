@@ -4,7 +4,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends gosu && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY server.py ./
+COPY server.py admin_api.py ./
 COPY static/ ./static/
 COPY docker-entrypoint.sh /usr/local/bin/koli-entrypoint
 RUN useradd --create-home --uid 10001 koli && mkdir -p /data && chown -R koli:koli /data /app && chmod 755 /usr/local/bin/koli-entrypoint
