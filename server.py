@@ -14,6 +14,7 @@ import os
 import secrets
 import sqlite3
 import threading
+from admin_api import migrate as migrate_admin, get_settings, register as register_admin
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -143,6 +144,7 @@ def initialize_db():
         for column, definition in [('pickup_attempts','INTEGER NOT NULL DEFAULT 0'), ('pickup_locked_until','TEXT')]:
             if column not in cols:
                 cx.execute(f'ALTER TABLE orders ADD COLUMN {column} {definition}')
+        migrate_admin(cx)
         for username, password, role, name in (
             ('admin', DEFAULT_ADMIN_PASSWORD, 'admin', 'Administrateur'),
             ('rider', DEFAULT_RIDER_PASSWORD, 'rider', 'Kouamé (démo)'),
@@ -160,12 +162,14 @@ def validate_point(lat: float, lng: float):
         raise HTTPException(422, 'Coordonnées GPS invalides')
 
 
-def fresh_gps(at):
+def fresh_gps(at, max_age=None):
+    if max_age is None:
+        with db() as cx: max_age = get_settings(cx)['gps_max_age_seconds']
     if not at:
         return False
     try:
         ts = datetime.fromisoformat(at)
-        return ts.tzinfo is not None and timedelta(0) <= datetime.now(timezone.utc) - ts <= timedelta(seconds=GPS_MAX_AGE_SECONDS)
+        return ts.tzinfo is not None and timedelta(0) <= datetime.now(timezone.utc) - ts <= timedelta(seconds=max_age)
     except (ValueError, TypeError):
         return False
 
@@ -180,7 +184,8 @@ def haversine(a, b, c, d):
 def estimate(lat1, lng1, lat2, lng2):
     dist = round(haversine(lat1, lng1, lat2, lng2), 2)
     # Customer-facing tariff: 200 FCFA per started kilometre, with a 200 FCFA minimum.
-    return dist, max(200, int(math.ceil(dist) * 200))
+    with db() as cx: cfg = get_settings(cx)
+    return dist, max(cfg['minimum_xof'], math.ceil(dist) * cfg['per_km_xof'])
 
 
 def event(cx, order_id, status, note):
@@ -192,18 +197,20 @@ def try_dispatch(cx):
     """Assign oldest waiting orders to the nearest online, idle rider with a GPS fix.
     Riders with active orders are not available until delivery completes.
     """
+    cfg = get_settings(cx)
     waiting = cx.execute('SELECT * FROM orders WHERE status=? AND rider_id IS NULL ORDER BY id', ('pending',)).fetchall()
     for order in waiting:
-        candidates = cx.execute('''SELECT u.* FROM users u WHERE u.role='rider' AND u.online=1
+        candidates = cx.execute('''SELECT u.* FROM users u WHERE u.role='rider' AND u.enabled=1 AND u.online=1
             AND u.lat IS NOT NULL AND u.lng IS NOT NULL AND u.last_location_at >= ?
             AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.rider_id=u.id AND o.status NOT IN ('delivered','cancelled'))''',
-            ((datetime.now(timezone.utc) - timedelta(seconds=GPS_MAX_AGE_SECONDS)).isoformat(timespec='seconds'),)).fetchall()
+            ((datetime.now(timezone.utc) - timedelta(seconds=cfg['gps_max_age_seconds'])).isoformat(timespec='seconds'),)).fetchall()
+        candidates = [r for r in candidates if fresh_gps(r['last_location_at'], cfg['gps_max_age_seconds'])]
         if not candidates:
             break
         weights = []
         for candidate in candidates:
             average = cx.execute('SELECT AVG(rating) FROM orders WHERE rider_id=? AND rating IS NOT NULL', (candidate['id'],)).fetchone()[0]
-            score = average if average is not None else 5
+            score = average if average is not None and cfg['rating_dispatch_enabled'] else 5
             distance = haversine(order['pickup_lat'], order['pickup_lng'], candidate['lat'], candidate['lng'])
             weights.append(max(1, int((score / 5) ** 2 * 10000 / (1 + distance))))
         draw = secrets.randbelow(sum(weights))
@@ -251,7 +258,7 @@ def get_user(request: Request, role: Optional[str] = None):
         row = cx.execute('''SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id
             WHERE s.token_hash=? AND s.expires_at>?''',
             (hashlib.sha256(token.encode()).hexdigest(), utc_now())).fetchone()
-    if not row:
+    if not row or not row['enabled']:
         raise HTTPException(401, 'Session expirée, veuillez vous reconnecter')
     if role and row['role'] != role:
         raise HTTPException(403, 'Accès interdit')
@@ -326,14 +333,15 @@ def health():
 @APP.get('/api/config')
 def public_config():
     # Browser-restricted Maps keys are intended to be public; never expose server secrets here.
-    return {'google_maps_api_key': os.environ.get('GOOGLE_MAPS_API_KEY', '')}
+    with db() as cx: cfg = get_settings(cx)
+    return {'google_maps_api_key': os.environ.get('GOOGLE_MAPS_API_KEY', ''), 'pricing': {'per_km_xof': cfg['per_km_xof'], 'minimum_xof': cfg['minimum_xof']}}
 
 
 @APP.post('/api/login')
 def login(body: LoginBody):
     with db() as cx:
         user = cx.execute('SELECT * FROM users WHERE username=?', (body.username.strip(),)).fetchone()
-        if not user or not verify_password(body.password, user['password_hash']):
+        if not user or not user['enabled'] or not verify_password(body.password, user['password_hash']):
             raise HTTPException(401, 'Identifiants incorrects')
         token = secrets.token_urlsafe(40)
         cx.execute('INSERT INTO sessions(token_hash,user_id,expires_at) VALUES(?,?,?)',
@@ -434,8 +442,8 @@ def rider_change_status(order_id: int, body: StatusBody, request: Request):
         if next_status == 'delivered':
             if not fresh_gps(user.get('last_location_at')):
                 raise HTTPException(409, 'GPS du livreur trop ancien')
-            if haversine(user['lat'], user['lng'], row['dropoff_lat'], row['dropoff_lng']) > 0.15:
-                raise HTTPException(409, 'Le livreur doit être à moins de 150 m de la destination')
+            if haversine(user['lat'], user['lng'], row['dropoff_lat'], row['dropoff_lng']) > get_settings(cx)['completion_radius_m'] / 1000:
+                raise HTTPException(409, f"Le livreur doit être à moins de {get_settings(cx)['completion_radius_m']} m de la destination")
         cx.execute('UPDATE orders SET status=?,updated_at=? WHERE id=?', (next_status, utc_now(), order_id))
         event(cx, order_id, next_status, {'to_pickup': 'Livreur en route vers le point de retrait',
               'picked_up': 'Colis récupéré', 'delivering': 'Colis en livraison', 'delivered': 'Colis livré'}[next_status])
@@ -486,33 +494,19 @@ def admin_dashboard(request: Request):
 
 @APP.post('/api/admin/riders')
 def create_rider(body: RiderCreate, request: Request):
-    get_user(request, 'admin')
+    actor = get_user(request, 'admin')
     with db() as cx:
         try:
             cur = cx.execute('INSERT INTO users(name,username,password_hash,role,phone,created_at) VALUES(?,?,?,?,?,?)',
                              (body.name.strip(), body.username.strip().lower(), hash_password(body.password), 'rider', body.phone.strip(), utc_now()))
         except sqlite3.IntegrityError:
             raise HTTPException(409, 'Identifiant déjà utilisé')
+        cx.execute('INSERT INTO admin_audit(actor_id,action,object_id,reason,created_at) VALUES(?,?,?,?,?)',
+                   (actor['id'], 'rider_create', str(cur.lastrowid), body.name.strip(), utc_now()))
         return {'id': cur.lastrowid, 'name': body.name.strip(), 'username': body.username.strip().lower()}
 
 
-@APP.post('/api/admin/orders/{order_id}/assign')
-def admin_assign(order_id: int, body: AssignBody, request: Request):
-    get_user(request, 'admin')
-    with db() as cx:
-        row = cx.execute('SELECT * FROM orders WHERE id=?', (order_id,)).fetchone()
-        rider = cx.execute("SELECT * FROM users WHERE id=? AND role='rider'", (body.rider_id,)).fetchone()
-        if not row or not rider:
-            raise HTTPException(404, 'Commande ou livreur introuvable')
-        if row['status'] != 'pending' or row['rider_id'] is not None:
-            raise HTTPException(409, 'La commande est déjà prise en charge')
-        busy = cx.execute("SELECT 1 FROM orders WHERE rider_id=? AND status NOT IN ('delivered','cancelled')", (rider['id'],)).fetchone()
-        if busy:
-            raise HTTPException(409, 'Le livreur a déjà une course')
-        cx.execute('UPDATE orders SET rider_id=?,status=?,updated_at=? WHERE id=?',
-                   (rider['id'], 'assigned', utc_now(), order_id))
-        event(cx, order_id, 'assigned', 'Attribué par le gestionnaire à ' + rider['name'])
-        return public_order(cx, cx.execute('SELECT * FROM orders WHERE id=?', (order_id,)).fetchone())
-
-
+register_admin(APP, globals())
+with db() as cx:
+    try_dispatch(cx)
 app = APP
