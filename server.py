@@ -1,4 +1,4 @@
-R---
+
 """KOLI CI — single-service courier delivery MVP for Abidjan.
 
 Runs with Python 3.10+ / FastAPI and SQLite. All admin and rider actions
