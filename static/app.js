@@ -1,3 +1,4 @@
+
 /* KOLI CI client — vanilla JavaScript + Leaflet. API is same-origin. */
 const $ = id => document.getElementById(id);
 const state = {
@@ -73,6 +74,8 @@ function setPoint(type,p){
  renderEstimate();drawRoute();
 }
 function distanceKm(a,b){const R=6371, rad=x=>x*Math.PI/180,dlat=rad(b.lat-a.lat),dlng=rad(b.lng-a.lng);const h=Math.sin(dlat/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dlng/2)**2;return R*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h))}
+async function initGooglePlaces(){try{const cfg=await fetch('/api/config',{cache:'no-store'}).then(r=>r.json());if(!cfg.google_maps_api_key||!window.google)return;for(const type of ['pickup','dropoff']){const input=$(type+'Input');if(!input||!google.maps?.places)return;const ac=new google.maps.places.Autocomplete(input,{componentRestrictions:{country:'ci'},fields:['formatted_address','geometry','name']});ac.addListener('place_changed',()=>{const p=ac.getPlace();if(!p.geometry?.location)return;setPoint(type,{lat:p.geometry.location.lat(),lng:p.geometry.location.lng(),label:p.formatted_address||p.name||input.value});});}}catch{}}
+async function loadGooglePlaces(){try{const cfg=await fetch('/api/config',{cache:'no-store'}).then(r=>r.json());if(!cfg.google_maps_api_key)return;await new Promise((resolve,reject)=>{const s=document.createElement('script');s.src='https://maps.googleapis.com/maps/api/js?key='+encodeURIComponent(cfg.google_maps_api_key)+'&libraries=places';s.onload=resolve;s.onerror=reject;document.head.appendChild(s)});await initGooglePlaces()}catch{}}
 function getQuote(){const a=state.points.pickup,b=state.points.dropoff;if(!a||!b)return null;const km=distanceKm(a,b);return {km,price:Math.max(200,Math.ceil(km)*200)}}
 function renderEstimate(){const q=getQuote();$('estimatePrice').innerHTML=q?`${currency(q.price)} <small>FCFA</small>`:'— <small>FCFA</small>';$('estimateDistance').textContent=q?`${q.km.toFixed(1)} km à vol d’oiseau · estimation pilote`:'Sélectionnez vos adresses'}
 async function drawRoute(){const map=state.map,a=state.points.pickup,b=state.points.dropoff;if(!map)return;
@@ -106,9 +109,9 @@ for(const type of ['pickup','dropoff']){
 $('orderBtn').onclick=async()=>{
  if(state.loading)return;
  const a=state.points.pickup,b=state.points.dropoff;if(!a||!b){toast('Choisissez les deux adresses sur la carte',true);return}
- const customer_name=$('customerName').value.trim(),customer_phone=$('customerPhone').value.trim();if(customer_name.length<2||customer_phone.length<5){toast('Indiquez votre nom et votre numéro de téléphone',true);return}
+ const sender_name=$('senderName').value.trim(),sender_phone=$('senderPhone').value.trim(),customer_name=$('customerName').value.trim(),customer_phone=$('customerPhone').value.trim();if(sender_name.length<2||sender_phone.length<5||customer_name.length<2||customer_phone.length<5){toast('Indiquez les coordonnées de l’expéditeur et du destinataire',true);return}
  state.loading=true;$('orderBtn').disabled=true;$('orderBtn').textContent='Enregistrement de la commande...';
- try{const j=await api('/orders',{method:'POST',data:{pickup:a,dropoff:b,customer_name,customer_phone,notes:$('orderNotes').value.trim()}});remember(j.order,j.tracking_token);toast('Commande '+j.order.code+' créée avec succès !');state.chosenOrder=j.order.id;switchPage('tracking')}
+ try{const j=await api('/orders',{method:'POST',data:{pickup:a,dropoff:b,sender_name,sender_phone,customer_name,customer_phone,notes:$('orderNotes').value.trim()}});remember(j.order,j.tracking_token);toast('Commande '+j.order.code+' créée avec succès !');state.chosenOrder=j.order.id;switchPage('tracking')}
  catch(e){toast(e.message,true)}finally{state.loading=false;$('orderBtn').disabled=false;$('orderBtn').innerHTML='Confirmer la livraison <span>↗</span>'}
 };
 
@@ -123,7 +126,7 @@ async function openOrder(id){state.chosenOrder=id;const x=stored().find(x=>x.id=
  document.querySelectorAll('[data-track-id]').forEach(b=>b.classList.toggle('selected',Number(b.dataset.trackId)===id));
  $('orderDetail').innerHTML=`<div class="detail-head"><div><strong>${escapeHtml(o.code)}</strong><small>${fmtDate(o.created_at)}</small></div><span class="status-pill ${clsStatus(o.status)}">${escapeHtml(STATUSES[o.status]||o.status)}</span></div>
  <div class="address-pair"><div><small>● DÉPART</small>${escapeHtml(o.pickup_label)}</div><div><small>◆ ARRIVÉE</small>${escapeHtml(o.dropoff_label)}</div></div>
- <p style="font-size:12px;margin:16px 0 2px"><b>Livreur :</b> ${escapeHtml(o.rider?.name||'Attribution en cours')} ${o.rider?.last_location_at?`<small>· ${o.rider.gps_live?'GPS récent':'Dernier GPS (hors ligne)'} : ${fmtDate(o.rider.last_location_at)}</small>`:''}</p>
+ <p style="font-size:12px;margin:16px 0 2px"><b>Expéditeur :</b> ${escapeHtml(o.sender_name||'—')} · ${escapeHtml(o.sender_phone||'—')}<br><b>Destinataire :</b> ${escapeHtml(o.customer_name)} · ${escapeHtml(o.customer_phone)}<br><b>Livreur :</b> ${escapeHtml(o.rider?.name||'Attribution en cours')} ${o.rider?.last_location_at?`<small>· ${o.rider.gps_live?'GPS récent':'Dernier GPS (hors ligne)'} : ${fmtDate(o.rider.last_location_at)}</small>`:''}</p>
  <h3 style="font-size:15px;margin:20px 0">Progression de la livraison</h3><ul class="timeline">${o.events.map(e=>`<li><strong>${escapeHtml(e.note)}</strong><small>${fmtDate(e.created_at)}</small></li>`).join('')}</ul>
  <div class="detail-fee"><span>Estimation de livraison</span><strong>${currency(o.price_xof)} FCFA</strong></div><button class="outline-button" id="copyTracking" style="margin-top:18px">Copier le lien de suivi ↗</button>`;
  $('copyTracking').onclick=async()=>{const url=location.origin+location.pathname+'?order='+id+'&key='+encodeURIComponent(x.key);try{await navigator.clipboard.writeText(url);toast('Lien de suivi copié')}catch{prompt('Copiez ce lien de suivi',url)}};
@@ -148,7 +151,7 @@ async function refreshRider(){if(!state.riderToken)return;const [me,orders]=awai
  $('riderName').textContent=me.name;$('riderOnlineLabel').textContent=me.online?'En ligne':'Hors ligne';$('riderOnlineLabel').style.color=me.online?'#20a17b':'';$('onlineBtn').textContent=me.online?'Passer hors ligne':'Passer en ligne';
  $('riderLocationLabel').textContent=me.lat==null?'En attente':(me.lat.toFixed(4)+', '+me.lng.toFixed(4));
  $('riderTaskCount').textContent=orders.length+' mission(s)';
- $('riderOrderList').innerHTML=orders.length?orders.map(o=>`<div class="task"><div class="detail-head"><h3>${escapeHtml(o.code)}</h3><span class="status-pill ${clsStatus(o.status)}">${escapeHtml(STATUSES[o.status]||o.status)}</span></div><p><b>① Retrait</b> · ${escapeHtml(o.pickup_label)}</p><p><b>② Livraison</b> · ${escapeHtml(o.dropoff_label)}</p><p><b>Destinataire</b> · ${escapeHtml(o.customer_name)} · <a href="tel:${escapeHtml(o.customer_phone)}">${escapeHtml(o.customer_phone)}</a></p><p><b>Distance directe</b> ${o.distance_km} km · <b>Tarif estimé</b> ${currency(o.price_xof)} FCFA</p>${o.notes?`<p><b>Instructions</b> : ${escapeHtml(o.notes)}</p>`:''}${NEXT[o.status]?`<div class="task-actions"><button class="primary-button" data-advance="${o.id}" data-next="${NEXT[o.status][0]}">${NEXT[o.status][1]} <span>→</span></button><button class="outline-button" data-maporder="${o.id}">Itinéraire ↗</button></div>`:''}</div>`).join(''):'<div class="empty">Aucune commande. Mettez-vous en ligne et activez le GPS pour recevoir une course.</div>';
+ $('riderOrderList').innerHTML=orders.length?orders.map(o=>`<div class="task"><div class="detail-head"><h3>${escapeHtml(o.code)}</h3><span class="status-pill ${clsStatus(o.status)}">${escapeHtml(STATUSES[o.status]||o.status)}</span></div><p><b>① Retrait</b> · ${escapeHtml(o.pickup_label)}</p><p><b>② Livraison</b> · ${escapeHtml(o.dropoff_label)}</p><p><b>Expéditeur</b> · ${escapeHtml(o.sender_name||'—')} · ${escapeHtml(o.sender_phone||'—')}</p><p><b>Destinataire</b> · ${escapeHtml(o.customer_name)} · <a href="tel:${escapeHtml(o.customer_phone)}">${escapeHtml(o.customer_phone)}</a></p><p><b>Distance directe</b> ${o.distance_km} km · <b>Tarif estimé</b> ${currency(o.price_xof)} FCFA</p>${o.notes?`<p><b>Instructions</b> : ${escapeHtml(o.notes)}</p>`:''}${NEXT[o.status]?`<div class="task-actions"><button class="primary-button" data-advance="${o.id}" data-next="${NEXT[o.status][0]}">${NEXT[o.status][1]} <span>→</span></button><button class="outline-button" data-maporder="${o.id}">Itinéraire ↗</button></div>`:''}</div>`).join(''):'<div class="empty">Aucune commande. Mettez-vous en ligne et activez le GPS pour recevoir une course.</div>';
  document.querySelectorAll('[data-advance]').forEach(b=>b.onclick=async()=>{try{await api('/rider/orders/'+b.dataset.advance+'/status',{method:'PATCH',data:{status:b.dataset.next},token:riderHeaders()});toast('Statut mis à jour');await refreshRider()}catch(e){toast(e.message,true)}});
  document.querySelectorAll('[data-maporder]').forEach(b=>b.onclick=()=>{const o=orders.find(x=>x.id===Number(b.dataset.maporder));const start=o.status==='assigned'||o.status==='to_pickup'?[o.pickup_lat,o.pickup_lng]:[o.dropoff_lat,o.dropoff_lng];const origin=me.lat!=null?[me.lat,me.lng]:start;const url=`https://www.google.com/maps/dir/?api=1&origin=${origin.join(',')}&destination=${start.join(',')}&travelmode=driving`;window.open(url,'_blank','noopener,noreferrer')});
  if(me.online)beginGpsWatch();else stopGpsWatch();
@@ -178,7 +181,7 @@ $('addRiderBtn').onclick=async()=>{const data={name:$('newRiderName').value.trim
 async function logoutAdmin(send=true){if(send&&state.adminToken){try{await api('/logout',{method:'POST',token:state.adminToken})}catch{}}state.adminToken=null;sessionStorage.removeItem('koli_admin_token');$('adminLogin').hidden=false;$('adminDashboard').hidden=true}
 $('adminLogoutBtn').onclick=()=>logoutAdmin();
 
-initMap();
+initMap();loadGooglePlaces();
 if(location.pathname==='/rider')switchPage('rider');
 else if(location.pathname==='/admin')switchPage('admin');
 else if(location.pathname==='/client')switchPage('customer');
