@@ -73,7 +73,7 @@ function setPoint(type,p){
  renderEstimate();drawRoute();
 }
 function distanceKm(a,b){const R=6371, rad=x=>x*Math.PI/180,dlat=rad(b.lat-a.lat),dlng=rad(b.lng-a.lng);const h=Math.sin(dlat/2)**2+Math.cos(rad(a.lat))*Math.cos(rad(b.lat))*Math.sin(dlng/2)**2;return R*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h))}
-function getQuote(){const a=state.points.pickup,b=state.points.dropoff;if(!a||!b)return null;const km=distanceKm(a,b);return {km,price:Math.max(1000,Math.ceil((800+km*300)/100)*100)}}
+function getQuote(){const a=state.points.pickup,b=state.points.dropoff;if(!a||!b)return null;const km=distanceKm(a,b);return {km,price:Math.max(200,Math.ceil(km)*200)}}
 function renderEstimate(){const q=getQuote();$('estimatePrice').innerHTML=q?`${currency(q.price)} <small>FCFA</small>`:'— <small>FCFA</small>';$('estimateDistance').textContent=q?`${q.km.toFixed(1)} km à vol d’oiseau · estimation pilote`:'Sélectionnez vos adresses'}
 async function drawRoute(){const map=state.map,a=state.points.pickup,b=state.points.dropoff;if(!map)return;
  if(state.routeLine){map.removeLayer(state.routeLine);state.routeLine=null}if(!a||!b)return;
