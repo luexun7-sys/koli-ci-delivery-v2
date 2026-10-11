@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<meta name="theme-color" content="#121b2d" />
+<title>KOLI CI · Livraison rapide à Abidjan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzx6D1sLZ9mYV4cJcBaaWw/Vr+uoc=" crossorigin="" />
+<link rel="stylesheet" href="/static/style.css" />
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml" />
+<link id="webManifest" rel="manifest" href="/static/manifest-client.webmanifest" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark"><svg width="27" height="27" fill="none" viewBox="0 0 27 27"><path d="M4 17 15 6h8L12 17H4Z" fill="white"/><path d="M4 21h8l11-11v8l-3 3H4Z" fill="white" opacity=".6"/></svg></span><span>KOLI <em>CI</em><small>DELIVERY PLATFORM</small></span></div>
+    <div class="nav-caption">ESPACE</div>
+    <nav class="nav-group">
+      <button class="nav-item active" data-page="customer"><span class="nav-icon">⌁</span><span>Nouvelle livraison</span><span class="nav-end">↗</span></button>
+      <button class="nav-item" data-page="tracking"><span class="nav-icon">◎</span><span>Mes livraisons</span></button>
+      <button class="nav-item" data-page="rider"><span class="nav-icon">▣</span><span>Espace livreur</span></button>
+      <button class="nav-item" data-page="admin"><span class="nav-icon">▦</span><span>Gestionnaire</span></button>
+    </nav>
+    <div class="sidebar-bottom"><div class="support-icon">✳</div><div><strong>Besoin d'aide ?</strong><p>Version pilote · Abidjan</p></div></div>
+    <div class="sidebar-foot">© 2026 KOLI CI <span>v0.1 MVP</span></div>
+  </aside>
+
+  <div class="main-wrap">
+    <header class="topbar"><button class="hamburger" id="menuBtn" aria-label="Menu">☰</button><div class="breadcrumb">Plateforme <span>/</span> <strong id="breadcrumb">Nouvelle livraison</strong></div><div class="top-actions"><span class="live-dot"></span><span>Service de démonstration</span><span class="avatar">K</span></div></header>
+    <main>
+      <section class="page visible" id="page-customer">
+        <div class="page-header"><div><div class="eyebrow"><span>✦</span> LIVRAISON URBAINE · ABIDJAN</div><h1>Envoyez un colis.<br/><span>On s'occupe du reste.</span></h1><p class="subheading">Choisissez deux points sur la carte, confirmez votre demande et suivez votre livreur.</p></div><div class="tag"><span class="tag-dot"></span> Livraison express</div></div>
+        <div class="order-grid">
+          <div class="panel order-panel"><div class="panel-heading"><div><div class="step-num">01</div><h2>Votre itinéraire</h2></div><span class="soft-tag">Simple & rapide</span></div>
+            <div class="route-form">
+              <div class="route-rail"><span class="route-origin"></span><span class="route-dash"></span><span class="route-dest"></span></div>
+              <div class="route-inputs">
+                <div class="field-label">POINT DE RÉCUPÉRATION</div><div class="input-with-icon"><input id="pickupInput" placeholder="Rechercher ou choisir sur la carte" autocomplete="off"/><button data-map-target="pickup" class="pin-select" title="Choisir le départ sur la carte">◎</button></div><div id="pickupSuggestions" class="suggestions"></div>
+                <div class="field-label spaced">POINT DE LIVRAISON</div><div class="input-with-icon"><input id="dropoffInput" placeholder="Adresse de destination" autocomplete="off"/><button data-map-target="dropoff" class="pin-select" title="Choisir l'arrivée sur la carte">◎</button></div><div id="dropoffSuggestions" class="suggestions"></div>
+              </div>
+            </div>
+            <div class="selection-hint" id="selectionHint">✳ Cliquez sur un bouton ◎ puis touchez la carte pour placer le point.</div>
+            <div class="line-break"></div>
+            <div class="panel-heading small"><div><div class="step-num">02</div><h2>Votre colis</h2></div></div>
+            <div class="form-stack"><div class="form-row"><label>Votre nom<input id="customerName" placeholder="Ex. Jean Kouassi" maxlength="90" /></label><label>Téléphone<input id="customerPhone" type="tel" placeholder="07 00 00 00 00" maxlength="40" /></label></div><label>Instructions au livreur <span class="muted">(facultatif)</span><textarea id="orderNotes" rows="2" placeholder="Ex. Appelez avant d'arriver, portail bleu..."></textarea></label></div>
+            <div class="estimate"><div class="estimate-head"><span>ESTIMATION</span><span class="pill">Tarif pilote</span></div><div class="estimate-body"><div><div class="estimate-price" id="estimatePrice">— <small>FCFA</small></div><span class="muted" id="estimateDistance">Sélectionnez vos adresses</span></div><div class="estimate-icon">↗</div></div></div>
+            <button class="primary-button" id="orderBtn">Confirmer la livraison <span>↗</span></button><p class="legal">Tarif indicatif de démonstration, non contractuel. Aucun paiement n'est effectué.</p>
+          </div>
+          <div class="map-panel"><div class="map-title"><div class="map-title-icon">⌖</div><div><strong>Carte interactive</strong><small>Déplacez les points directement sur la carte</small></div></div><div id="map" class="map-view"><div id="mapFallback" class="map-fallback">Chargement de la carte… Vérifiez votre connexion Internet.</div></div><div class="map-bottom"><span><b class="dot pickup-dot"></b> Départ</span><span><b class="dot dropoff-dot"></b> Arrivée</span><button id="geoBtn">⌖ Ma position</button></div><div class="map-toast" id="mapToast" hidden></div></div>
+        </div>
+        <div class="feature-strip"><div><span>✦</span><strong>Prise en charge rapide</strong><small>Attribution automatique</small></div><div><span>⌖</span><strong>Suivi GPS</strong><small>Position du livreur sur la carte</small></div><div><span>▣</span><strong>Historique des étapes</strong><small>Chaque étape enregistrée</small></div></div>
+      </section>
+
+      <section class="page" id="page-tracking"><div class="section-top"><div class="eyebrow">SUIVI DES COMMANDES</div><h1>Mes livraisons<span class="period">.</span></h1><p class="subheading">Retrouvez vos commandes sur cet appareil et suivez leur progression.</p></div><div class="tracking-grid"><div class="panel"><div class="panel-heading"><h2>Vos commandes</h2><span class="soft-tag" id="orderCount">0 commandes</span></div><div id="orderHistory" class="history-list"><div class="empty">Aucune livraison enregistrée.</div></div></div><div class="panel detail-panel" id="orderDetail"><div class="empty-visual">◎</div><h3>Sélectionnez une livraison</h3><p>Les étapes et la position de votre livreur apparaîtront ici.</p></div></div><div class="panel track-map-panel" id="trackMapWrap" hidden><div class="panel-heading"><h2>Suivi cartographique</h2><span class="soft-tag">Actualisation automatique</span></div><div id="trackingMap" class="tracking-map"></div></div></section>
+
+      <section class="page" id="page-rider"><div class="section-top"><div class="eyebrow">APPLICATION LIVREUR</div><h1>Espace livreur<span class="period">.</span></h1><p class="subheading">Connectez-vous, activez votre disponibilité et suivez les missions qui vous sont attribuées.</p></div><div id="riderLogin" class="panel login-panel"><div class="login-symbol">▣</div><h2>Connexion livreur</h2><p>Utilisez votre compte livreur pour accéder aux commandes.</p><label>Identifiant<input id="riderUsername" value="rider" /></label><label>Mot de passe<input type="password" id="riderPassword" placeholder="Mot de passe" /></label><button id="riderLoginBtn" class="primary-button">Se connecter <span>→</span></button><small>Contactez le gestionnaire pour obtenir vos accès.</small></div><div id="riderDashboard" hidden><div class="rider-summary"><div class="stat-card"><small>STATUT</small><strong id="riderOnlineLabel">Hors ligne</strong><button id="onlineBtn" class="outline-button">Passer en ligne</button></div><div class="stat-card"><small>LOCALISATION GPS</small><strong id="riderLocationLabel">En attente</strong><button id="riderLocateBtn" class="outline-button">⌖ Actualiser GPS</button></div><div class="stat-card"><small>COMPTE CONNECTÉ</small><strong id="riderName"></strong><button id="riderLogoutBtn" class="text-button">Se déconnecter →</button></div></div><div class="warning-box">La géolocalisation doit être autorisée et le site ouvert en HTTPS (ou localhost). Sans GPS, aucune attribution automatique ne peut avoir lieu. Pour les essais sur ordinateur, un bouton de position test est disponible ci-dessous.</div><button id="demoLocationBtn" class="test-btn">Définir une position de test à Angré (démo)</button><div class="panel"><div class="panel-heading"><h2>Missions attribuées</h2><span class="soft-tag" id="riderTaskCount">0 mission</span></div><div id="riderOrderList" class="task-list"><div class="empty">Aucune mission pour le moment.</div></div></div></div></section>
+
+      <section class="page" id="page-admin"><div class="section-top"><div class="eyebrow">BACK-OFFICE</div><h1>Centre de gestion<span class="period">.</span></h1><p class="subheading">Surveillez les commandes et les livreurs, ajoutez de nouveaux comptes et assignez des courses.</p></div><div id="adminLogin" class="panel login-panel"><div class="login-symbol">▦</div><h2>Connexion gestionnaire</h2><p>Accès réservé à la gestion des livraisons.</p><label>Identifiant<input id="adminUsername" value="admin" /></label><label>Mot de passe<input type="password" id="adminPassword" placeholder="Mot de passe" /></label><button id="adminLoginBtn" class="primary-button">Ouvrir le tableau de bord <span>→</span></button><small>Accès réservé au responsable de la plateforme.</small></div><div id="adminDashboard" hidden><div class="admin-stats" id="adminStats"></div><div class="admin-grid"><div class="panel"><div class="panel-heading"><h2>Toutes les commandes</h2><button class="outline-button tiny" id="adminRefreshBtn">↻ Actualiser</button></div><div id="adminOrders" class="admin-order-list"></div></div><div class="panel"><div class="panel-heading"><h2>Livreurs</h2><span class="soft-tag" id="riderCount">0 livreurs</span></div><div id="adminRiders"></div><div class="line-break"></div><h3>Créer un compte livreur</h3><div class="form-stack"><label>Nom<input id="newRiderName" placeholder="Nom du livreur" /></label><label>Identifiant<input id="newRiderUsername" placeholder="prenom.nom" /></label><label>Mot de passe<input id="newRiderPassword" type="password" placeholder="8 caractères minimum" /></label><label>Téléphone<input id="newRiderPhone" placeholder="07..." /></label><button id="addRiderBtn" class="primary-button">Ajouter le livreur <span>＋</span></button></div><button id="adminLogoutBtn" class="text-button">Se déconnecter →</button></div></div></div></section>
+    </main>
+  </div>
+</div>
+<nav id="mobileCustomerTabs" class="mobile-customer-tabs" aria-label="Navigation client" hidden>
+  <button type="button" data-page="customer"><span>⌖</span> Commander</button>
+  <button type="button" data-page="tracking"><span>◎</span> Suivi</button>
+</nav>
+<div class="toast" id="toast" role="status"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="/static/app.js"></script>
+</body>
+</html>
+
