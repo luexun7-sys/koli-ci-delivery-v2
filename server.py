@@ -1,4 +1,3 @@
-
 """KOLI CI — single-service courier delivery MVP for Abidjan.
 
 Runs with Python 3.10+ / FastAPI and SQLite. All admin and rider actions
@@ -133,6 +132,17 @@ def initialize_db():
             cx.execute("ALTER TABLE orders ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''")
         if 'sender_phone' not in cols:
             cx.execute("ALTER TABLE orders ADD COLUMN sender_phone TEXT NOT NULL DEFAULT ''")
+        if 'pickup_code_hash' not in cols:
+            cx.execute("ALTER TABLE orders ADD COLUMN pickup_code_hash TEXT NOT NULL DEFAULT ''")
+        if 'pickup_verified_at' not in cols:
+            cx.execute("ALTER TABLE orders ADD COLUMN pickup_verified_at TEXT")
+        if 'rating' not in cols:
+            cx.execute("ALTER TABLE orders ADD COLUMN rating INTEGER")
+        if 'rating_comment' not in cols:
+            cx.execute("ALTER TABLE orders ADD COLUMN rating_comment TEXT NOT NULL DEFAULT ''")
+        for column, definition in [('pickup_attempts','INTEGER NOT NULL DEFAULT 0'), ('pickup_locked_until','TEXT')]:
+            if column not in cols:
+                cx.execute(f'ALTER TABLE orders ADD COLUMN {column} {definition}')
         for username, password, role, name in (
             ('admin', DEFAULT_ADMIN_PASSWORD, 'admin', 'Administrateur'),
             ('rider', DEFAULT_RIDER_PASSWORD, 'rider', 'Kouamé (démo)'),
@@ -190,7 +200,18 @@ def try_dispatch(cx):
             ((datetime.now(timezone.utc) - timedelta(seconds=GPS_MAX_AGE_SECONDS)).isoformat(timespec='seconds'),)).fetchall()
         if not candidates:
             break
-        rider = min(candidates, key=lambda r: haversine(order['pickup_lat'], order['pickup_lng'], r['lat'], r['lng']))
+        weights = []
+        for candidate in candidates:
+            average = cx.execute('SELECT AVG(rating) FROM orders WHERE rider_id=? AND rating IS NOT NULL', (candidate['id'],)).fetchone()[0]
+            score = average if average is not None else 5
+            distance = haversine(order['pickup_lat'], order['pickup_lng'], candidate['lat'], candidate['lng'])
+            weights.append(max(1, int((score / 5) ** 2 * 10000 / (1 + distance))))
+        draw = secrets.randbelow(sum(weights))
+        for candidate, weight in zip(candidates, weights):
+            draw -= weight
+            if draw < 0:
+                rider = candidate
+                break
         cx.execute('UPDATE orders SET rider_id=?,status=?,updated_at=? WHERE id=? AND status=?',
                    (rider['id'], 'assigned', utc_now(), order['id'], 'pending'))
         event(cx, order['id'], 'assigned', f"Livreur attribué : {rider['name']}")
@@ -201,6 +222,9 @@ def public_order(cx, row):
     if not data:
         return None
     data.pop('tracking_hash', None)
+    data.pop('pickup_code_hash', None)
+    data.pop('pickup_attempts', None)
+    data.pop('pickup_locked_until', None)
     data['rider'] = None
     if row['rider_id']:
         rider = cx.execute('SELECT id,name,phone,lat,lng,last_location_at FROM users WHERE id=?', (row['rider_id'],)).fetchone()
@@ -274,6 +298,13 @@ class AssignBody(BaseModel):
 class StatusBody(BaseModel):
     status: str
 
+class PickupCodeBody(BaseModel):
+    code: str = Field(min_length=4, max_length=4)
+
+class RatingBody(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    comment: str = Field(default='', max_length=300)
+
 
 @APP.get('/')
 def index():
@@ -332,20 +363,21 @@ def create_order(body: OrderBody):
         validate_point(p.lat, p.lng)
     distance, price = estimate(body.pickup.lat, body.pickup.lng, body.dropoff.lat, body.dropoff.lng)
     token = secrets.token_urlsafe(32)
+    pickup_code = f'{secrets.randbelow(10000):04d}'
     with db() as cx:
         code = 'KC-' + secrets.token_hex(4).upper()
         now = utc_now()
-        cur = cx.execute('''INSERT INTO orders(code,tracking_hash,sender_name,sender_phone,customer_name,customer_phone,notes,
+        cur = cx.execute('''INSERT INTO orders(code,tracking_hash,pickup_code_hash,sender_name,sender_phone,customer_name,customer_phone,notes,
             pickup_label,pickup_lat,pickup_lng,dropoff_label,dropoff_lat,dropoff_lng,
             distance_km,price_xof,status,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (code, hashlib.sha256(token.encode()).hexdigest(), body.sender_name.strip(), body.sender_phone.strip(), body.customer_name.strip(), body.customer_phone.strip(), body.notes.strip(),
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (code, hashlib.sha256(token.encode()).hexdigest(), hashlib.sha256((hashlib.sha256(token.encode()).hexdigest() + ':' + pickup_code).encode()).hexdigest(), body.sender_name.strip(), body.sender_phone.strip(), body.customer_name.strip(), body.customer_phone.strip(), body.notes.strip(),
              body.pickup.label, body.pickup.lat, body.pickup.lng, body.dropoff.label, body.dropoff.lat, body.dropoff.lng,
              distance, price, 'pending', now, now))
         event(cx, cur.lastrowid, 'pending', 'Commande enregistrée')
         try_dispatch(cx)
         order = public_order(cx, cx.execute('SELECT * FROM orders WHERE id=?', (cur.lastrowid,)).fetchone())
-    return {'tracking_token': token, 'order': order}
+    return {'tracking_token': token, 'pickup_code': pickup_code, 'order': order}
 
 
 @APP.get('/api/orders/{order_id}/track')
@@ -396,15 +428,50 @@ def rider_change_status(order_id: int, body: StatusBody, request: Request):
         row = cx.execute('SELECT * FROM orders WHERE id=? AND rider_id=?', (order_id, user['id'])).fetchone()
         if not row:
             raise HTTPException(404, 'Commande non attribuée')
-        next_status = {'assigned': 'to_pickup', 'to_pickup': 'picked_up', 'picked_up': 'delivering', 'delivering': 'delivered'}.get(row['status'])
+        next_status = {'assigned': 'to_pickup', 'picked_up': 'delivering', 'delivering': 'delivered'}.get(row['status'])
         if body.status != next_status:
             raise HTTPException(409, 'Transition de statut incorrecte')
+        if next_status == 'delivered':
+            if not fresh_gps(user.get('last_location_at')):
+                raise HTTPException(409, 'GPS du livreur trop ancien')
+            if haversine(user['lat'], user['lng'], row['dropoff_lat'], row['dropoff_lng']) > 0.15:
+                raise HTTPException(409, 'Le livreur doit être à moins de 150 m de la destination')
         cx.execute('UPDATE orders SET status=?,updated_at=? WHERE id=?', (next_status, utc_now(), order_id))
         event(cx, order_id, next_status, {'to_pickup': 'Livreur en route vers le point de retrait',
               'picked_up': 'Colis récupéré', 'delivering': 'Colis en livraison', 'delivered': 'Colis livré'}[next_status])
         if next_status == 'delivered':
             try_dispatch(cx)
         return public_order(cx, cx.execute('SELECT * FROM orders WHERE id=?', (order_id,)).fetchone())
+
+@APP.post('/api/rider/orders/{order_id}/pickup')
+def verify_pickup(order_id: int, body: PickupCodeBody, request: Request):
+    user = get_user(request, 'rider')
+    with db() as cx:
+        row = cx.execute('SELECT * FROM orders WHERE id=? AND rider_id=?', (order_id, user['id'])).fetchone()
+        if not row or row['status'] != 'to_pickup':
+            raise HTTPException(409, 'Commande non prête pour le code de retrait')
+        if row['pickup_locked_until'] and row['pickup_locked_until'] > utc_now():
+            raise HTTPException(429, 'Trop de tentatives, réessayez dans 10 minutes')
+        if not hmac.compare_digest(row['pickup_code_hash'], hashlib.sha256((row['tracking_hash'] + ':' + body.code).encode()).hexdigest()):
+            attempts = row['pickup_attempts'] + 1
+            locked = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat(timespec='seconds') if attempts >= 5 else None
+            cx.execute('UPDATE orders SET pickup_attempts=?,pickup_locked_until=? WHERE id=?', (0 if locked else attempts, locked, order_id))
+            cx.commit()
+            raise HTTPException(409, 'Code de retrait incorrect')
+        now = utc_now(); cx.execute("UPDATE orders SET status='picked_up',pickup_verified_at=?,updated_at=? WHERE id=?", (now, now, order_id))
+        event(cx, order_id, 'picked_up', 'Code de retrait vérifié, colis récupéré')
+        return public_order(cx, cx.execute('SELECT * FROM orders WHERE id=?', (order_id,)).fetchone())
+
+@APP.post('/api/orders/{order_id}/rate')
+def rate_order(order_id: int, body: RatingBody, key: str):
+    with db() as cx:
+        row = cx.execute('SELECT * FROM orders WHERE id=?', (order_id,)).fetchone()
+        if not row or not hmac.compare_digest(row['tracking_hash'], hashlib.sha256(key.encode()).hexdigest()):
+            raise HTTPException(404, 'Commande introuvable')
+        if row['status'] != 'delivered': raise HTTPException(409, 'La commande n’est pas terminée')
+        if row['rating'] is not None: raise HTTPException(409, 'Cette commande a déjà été évaluée')
+        cx.execute('UPDATE orders SET rating=?,rating_comment=? WHERE id=?', (body.rating, body.comment.strip(), order_id))
+        return {'ok': True, 'rating': body.rating}
 
 
 @APP.get('/api/admin/dashboard')
@@ -449,4 +516,3 @@ def admin_assign(order_id: int, body: AssignBody, request: Request):
 
 
 app = APP
-
