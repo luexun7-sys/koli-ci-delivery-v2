@@ -64,6 +64,13 @@ class DeliveryFlow(unittest.TestCase):
         r=self.client.patch(f'/api/rider/orders/{id}/status',json={'status':'delivered'},headers=self.auth(self.rider))
         self.assertEqual(r.status_code,409)
         for status in ('to_pickup','picked_up','delivering','delivered'):
+            if status=='picked_up':
+                r=self.client.post(f'/api/rider/orders/{id}/pickup',json={'code':raw['pickup_code']},headers=self.auth(self.rider))
+                self.assertEqual(r.status_code,200,r.text)
+                continue
+            if status=='delivered':
+                self.assertEqual(self.client.patch(f'/api/rider/orders/{id}/status',json={'status':'delivered'},headers=self.auth(self.rider)).status_code,409)
+                self.client.post('/api/rider/location',json={'lat':5.320,'lng':-4.019},headers=self.auth(self.rider))
             r=self.client.patch(f'/api/rider/orders/{id}/status',json={'status':status},headers=self.auth(self.rider))
             self.assertEqual(r.status_code,200,r.text)
         tracked=self.client.get(f'/api/orders/{id}/track?key={key}').json()
@@ -71,6 +78,9 @@ class DeliveryFlow(unittest.TestCase):
         self.assertEqual(len(tracked['events']),6)
         self.assertIsNone(tracked['rider']['lat'], 'Do not reveal rider movements after completing a job')
         self.assertIsNone(tracked['rider']['lng'])
+
+        self.assertEqual(self.client.post(f'/api/orders/{id}/rate?key={key}',json={'rating':4,'comment':'Bon service'}).status_code,200)
+        self.assertEqual(self.client.post(f'/api/orders/{id}/rate?key={key}',json={'rating':5}).status_code,409)
 
         # Admin can see orders and create another rider.
         dashboard=self.client.get('/api/admin/dashboard',headers=self.auth(self.admin))
@@ -116,4 +126,3 @@ class DeliveryFlow(unittest.TestCase):
 
 if __name__=='__main__':
     unittest.main()
-
