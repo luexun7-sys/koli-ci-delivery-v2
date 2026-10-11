@@ -1,3 +1,4 @@
+
 """KOLI CI — single-service courier delivery MVP for Abidjan.
 
 Runs with Python 3.10+ / FastAPI and SQLite. All admin and rider actions
@@ -126,6 +127,12 @@ def initialize_db():
         CREATE INDEX IF NOT EXISTS idx_order_rider ON orders(rider_id, status);
         CREATE INDEX IF NOT EXISTS idx_events_order ON events(order_id);
         ''')
+        # Backward-compatible migration for sender contact details.
+        cols = {r[1] for r in cx.execute('PRAGMA table_info(orders)').fetchall()}
+        if 'sender_name' not in cols:
+            cx.execute("ALTER TABLE orders ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''")
+        if 'sender_phone' not in cols:
+            cx.execute("ALTER TABLE orders ADD COLUMN sender_phone TEXT NOT NULL DEFAULT ''")
         for username, password, role, name in (
             ('admin', DEFAULT_ADMIN_PASSWORD, 'admin', 'Administrateur'),
             ('rider', DEFAULT_RIDER_PASSWORD, 'rider', 'Kouamé (démo)'),
@@ -239,6 +246,8 @@ class Point(BaseModel):
 
 
 class OrderBody(BaseModel):
+    sender_name: str = Field(default='', max_length=90)
+    sender_phone: str = Field(default='', max_length=40)
     customer_name: str = Field(min_length=2, max_length=90)
     customer_phone: str = Field(min_length=5, max_length=40)
     notes: str = Field(default='', max_length=400)
@@ -283,6 +292,12 @@ def health():
     return {'ok': True, 'service': 'KOLI CI', 'time': utc_now()}
 
 
+@APP.get('/api/config')
+def public_config():
+    # Browser-restricted Maps keys are intended to be public; never expose server secrets here.
+    return {'google_maps_api_key': os.environ.get('GOOGLE_MAPS_API_KEY', '')}
+
+
 @APP.post('/api/login')
 def login(body: LoginBody):
     with db() as cx:
@@ -320,11 +335,11 @@ def create_order(body: OrderBody):
     with db() as cx:
         code = 'KC-' + secrets.token_hex(4).upper()
         now = utc_now()
-        cur = cx.execute('''INSERT INTO orders(code,tracking_hash,customer_name,customer_phone,notes,
+        cur = cx.execute('''INSERT INTO orders(code,tracking_hash,sender_name,sender_phone,customer_name,customer_phone,notes,
             pickup_label,pickup_lat,pickup_lng,dropoff_label,dropoff_lat,dropoff_lng,
             distance_km,price_xof,status,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-            (code, hashlib.sha256(token.encode()).hexdigest(), body.customer_name.strip(), body.customer_phone.strip(), body.notes.strip(),
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (code, hashlib.sha256(token.encode()).hexdigest(), body.sender_name.strip(), body.sender_phone.strip(), body.customer_name.strip(), body.customer_phone.strip(), body.notes.strip(),
              body.pickup.label, body.pickup.lat, body.pickup.lng, body.dropoff.label, body.dropoff.lat, body.dropoff.lng,
              distance, price, 'pending', now, now))
         event(cx, cur.lastrowid, 'pending', 'Commande enregistrée')
