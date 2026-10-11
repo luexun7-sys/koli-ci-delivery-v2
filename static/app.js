@@ -1,4 +1,3 @@
-
 /* KOLI CI client — vanilla JavaScript + Leaflet. API is same-origin. */
 const $ = id => document.getElementById(id);
 const state = {
@@ -55,6 +54,9 @@ function makePin(type){return L.divIcon({className:'',html:`<div class="marker-p
 function initMap(){
  if(!window.L){$('mapFallback').textContent='Carte indisponible. Une connexion Internet est nécessaire pour les fonds de carte.';toast('Impossible de charger Leaflet — vérifiez votre connexion',true);return;}
  state.map=L.map('map',{zoomControl:false}).setView(ABIDJAN,12);
+ const mapEl=$('map');mapEl.style.width='100%';mapEl.style.height='100%';mapEl.style.minWidth='0';mapEl.style.flex='1 1 auto';
+ requestAnimationFrame(()=>state.map.invalidateSize());
+ window.addEventListener('resize',()=>state.map?.invalidateSize());
  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap contributors'}).addTo(state.map);
  L.control.zoom({position:'bottomright'}).addTo(state.map);
  $('mapFallback').style.display='none';
